@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strip Tracking</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Strip Tracking</h1>
+      <span id="since" class="muted"></span>
+    </div>
+    <label class="switch" title="Activar o pausar la limpieza en todo el navegador">
+      <input type="checkbox" id="enabled" role="switch">
+      <span class="track" aria-hidden="true"></span>
+      <span id="enabledLabel">Activo</span>
+    </label>
+  </header>
+
+  <section class="site" id="siteBox" hidden>
+    <span class="host" id="siteHost"></span>
+    <button id="siteBtn" type="button"></button>
+  </section>
+
+  <section class="cards" id="cards"></section>
+
+  <section>
+    <h2>Últimos 14 días <span class="muted">(URLs limpiadas)</span></h2>
+    <div class="chart" id="chart" role="img"></div>
+    <div class="axis"><span id="axisStart"></span><span>hoy</span></div>
+  </section>
+
+  <section>
+    <h2>Parámetros más eliminados</h2>
+    <div class="list" id="topParams"></div>
+  </section>
+
+  <section>
+    <h2>Dominios con más tracking</h2>
+    <div class="list" id="topDomains"></div>
+  </section>
+
+  <section>
+    <h2>Actividad reciente</h2>
+    <div class="recent" id="recent"></div>
+  </section>
+
+  <section>
+    <h2>Parámetros propios</h2>
+    <form class="addform" id="customForm" autocomplete="off">
+      <input id="customInput" type="text" placeholder="Nombre exacto, p. ej. ref_id" maxlength="100"
+             spellcheck="false" autocapitalize="off" aria-label="Nombre del parámetro a eliminar">
+      <button type="submit">Añadir</button>
+    </form>
+    <p class="msg" id="customMsg" role="status"></p>
+    <div class="allow" id="customList"></div>
+  </section>
+
+  <section>
+    <details id="riskBox">
+      <summary>Parámetros de riesgo <span class="muted" id="riskCount"></span></summary>
+      <p class="muted riskintro">
+        Parecen de tracking, pero su nombre también lo usan webs para funciones reales (volver tras un login,
+        elegir una variante, filtrar…). Por eso <b>no</b> están en la lista estándar y vienen
+        <b>desactivados</b>. Actívalos solo si te compensa el riesgo de que alguna página se comporte distinto.
+      </p>
+      <div class="risklist" id="riskList"></div>
+    </details>
+  </section>
+
+  <section id="allowBox" hidden>
+    <h2>Sitios en los que no se limpia</h2>
+    <div class="allow" id="allowList"></div>
+  </section>
+
+  <footer>
+    <button id="exportJson" type="button">Exportar JSON</button>
+    <button id="exportCsv" type="button">Exportar CSV</button>
+    <button id="reset" type="button" class="danger">Reiniciar</button>
+  </footer>
+  <p class="muted note">Solo se guardan nombres de parámetro y dominio. Nunca valores ni URLs completas.</p>
+
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

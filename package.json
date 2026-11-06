@@ -1,0 +1,12 @@
+{
+  "name": "strip-tracking",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Extensión de Chrome que elimina parámetros de tracking de las URLs antes de navegar.",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "test": "node test/background.test.js",
+    "icons": "node tools/make-icons.js",
+    "pack": "node tools/pack.js"
+  }
+}
