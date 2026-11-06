@@ -28,23 +28,29 @@ const rule=()=>dyn.find(r=>r.id===1), rp=()=>rule()?.action.redirect.transform.q
 const set=async s=>{await chrome.storage.local.set({settings:s});await flush()};
 (async()=>{
  L.installed();await flush();
- assert.equal(rp().length,cat.standard.length,'inicial = solo estándar');
+ const BASE=rp().length;
+ assert(cat.standard.every(n=>rp().includes(n)),'faltan parámetros estándar');
+ assert(rp().includes('UTM_SOURCE')&&rp().includes('Utm_Source')&&rp().includes('Utm_Medium')&&rp().includes('Utm_Social-Type'),'faltan variantes de mayúsculas');
+ assert.equal(new Set(rp()).size,BASE,'variantes duplicadas');
  assert(!rp().includes('referrer'),'riesgo no debe estar activo por defecto');
  assert.deepEqual(rule().condition.requestMethods,['get']);
  // estadísticas: riesgo desactivado no cuenta
- await nav('https://www.example.com/a?utm_source=x&id=5&fbclid=abc&referrer=/home');await flush();
- assert.equal(store.stats.params,2,'referrer (riesgo) no debe contar');
+ await nav('https://www.example.com/a?utm_source=x&id=5&fbclid=abc&referrer=/home&UTM_MEDIUM=y');await flush();
+ assert.equal(store.stats.params,3,'referrer (riesgo) no debe contar; UTM_MEDIUM sí');
+ assert.equal(store.stats.byParam.utm_medium,1,'se agrupa por nombre canónico');
+ assert(!store.stats.byParam.UTM_MEDIUM);
  assert(!JSON.stringify(store.stats).includes('abc'));
  // activar riesgo
  await set({enabled:true,allow:[],risk:['referrer','psc','noexiste'],custom:[]});
- assert(rp().includes('referrer')&&rp().includes('psc')&&!rp().includes('noexiste')&&!rp().includes('feature'));
+ assert(rp().includes('referrer')&&rp().includes('REFERRER')&&rp().includes('psc')&&!rp().includes('noexiste')&&!rp().includes('feature'));
  await nav('https://b.test/?referrer=/x');await flush();
  assert.equal(store.stats.byParam.referrer,1);
  // propios (válidos, inválidos y duplicado de estándar)
  await set({enabled:true,allow:[],risk:[],custom:['mi_param','utm_source','a b','x=1','','mi_param']});
  assert(rp().includes('mi_param')&&!rp().includes('a b')&&!rp().includes('x=1'));
  assert.equal(rp().filter(x=>x==='mi_param').length,1);
- assert.equal(rp().length,cat.standard.length+1,'utm_source no se duplica');
+ assert.equal(rp().length,BASE+1,'utm_source no se duplica');
+ assert(!rp().includes('MI_PARAM'),'los propios no llevan variantes');
  assert(!rp().includes('referrer'),'riesgo desactivado vuelve a quitarse');
  await nav('https://c.test/?mi_param=1');await flush();
  assert.equal(store.stats.byParam.mi_param,1);
@@ -59,7 +65,7 @@ const set=async s=>{await chrome.storage.local.set({settings:s});await flush()};
  await nav('https://new.test/?utm_source=1');await flush();assert.equal(store.stats.urls,before);
  await set({enabled:true,allow:[],risk:[],custom:[]});assert.equal(dyn.length,1);
  // ajustes corruptos
- await set('basura');assert.equal(rp().length,cat.standard.length);
+ await set('basura');assert.equal(rp().length,BASE);
  // poda
  const big={};for(let i=0;i<2100;i++)big['d'+i+'.test']={urls:1,params:1,last:i};
  store.stats={...store.stats,byDomain:big};await nav('https://brandnew.test/?utm_source=1');await flush();

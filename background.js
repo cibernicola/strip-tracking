@@ -6,9 +6,9 @@ importScripts('shared.js'); // ajustes, catálogo de parámetros y utilidades co
  * Strip Tracking — service worker.
  *
  * - La limpieza la hace declarativeNetRequest con UNA regla dinámica cuya lista
- *   de parámetros se construye a partir de los ajustes: estándar + riesgo
- *   activado + propios (ver shared.js y params.json). Una sola regla evita que
- *   varias reglas de redirección compitan entre sí.
+ *   de parámetros se construye a partir de los ajustes: estándar + riesgo activado
+ *   (con variantes de mayúsculas) + propios (ver shared.js y params.json). Una sola
+ *   regla evita que varias reglas de redirección compitan entre sí.
  * - Aquí también se gestionan las estadísticas locales y la insignia del icono.
  *
  * Privacidad: solo se guardan nombres de parámetro y hostname.
@@ -44,7 +44,7 @@ async function applyRules() {
           priority: 1,
           action: {
             type: 'redirect',
-            redirect: { transform: { queryTransform: { removeParams: [...activeParams(catalog, settings)] } } },
+            redirect: { transform: { queryTransform: { removeParams: [...buildMatcher(catalog, settings).keys()] } } },
           },
           condition: { requestMethods: ['get'], resourceTypes: types },
         },
@@ -63,7 +63,7 @@ async function applyRules() {
 
 /* ---------- detección (para las estadísticas) ---------- */
 
-function extractTracked(urlString, paramSet) {
+function extractTracked(urlString, matcher) {
   let u;
   try {
     u = new URL(urlString);
@@ -74,7 +74,8 @@ function extractTracked(urlString, paramSet) {
   if (!u.search) return null;
   const found = [];
   for (const [name] of u.searchParams) {
-    if (paramSet.has(name)) found.push(name);
+    const canonical = matcher.get(name);
+    if (canonical) found.push(canonical); // en estadísticas se agrupa por nombre canónico
   }
   if (!found.length) return null;
   return { host: u.hostname.replace(/^www\./, '').toLowerCase(), found };
@@ -174,7 +175,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const [catalog, settings] = await Promise.all([loadCatalog(), getSettings()]);
     if (!settings.enabled) return;
     const { allow } = settings;
-    const hit = extractTracked(details.url, activeParams(catalog, settings));
+    const hit = extractTracked(details.url, buildMatcher(catalog, settings));
     if (!hit || isAllowed(hit.host, allow)) return;
     await record(hit.host, hit.found);
   } catch (e) {

@@ -33,9 +33,34 @@ function normalizeSettings(raw, catalog) {
   };
 }
 
-// Parámetros que se eliminan realmente: estándar + riesgo activado + propios.
-const activeParams = (catalog, settings) =>
-  new Set([...catalog.standard, ...settings.risk, ...settings.custom]);
+/*
+ * Chrome distingue mayúsculas en removeParams (comprobado: «UTM_SOURCE» sobrevive a «utm_source»),
+ * pero en la práctica aparecen variantes como UTM_SOURCE, Utm_Source o Utm_source.
+ * Para cada nombre del catálogo se generan esas variantes.
+ */
+function caseVariants(name) {
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  return new Set([
+    name,
+    name.toUpperCase(),
+    cap(name),
+    name.replace(/[A-Za-z]+/g, cap), // Utm_Social-Type
+  ]);
+}
+
+/*
+ * Parámetros que se eliminan realmente: estándar + riesgo activado (con sus variantes de
+ * mayúsculas) + propios (exactamente como se escribieron).
+ * Devuelve un Map variante → nombre canónico (el canónico es el que se usa en las estadísticas).
+ */
+function buildMatcher(catalog, settings) {
+  const map = new Map();
+  for (const n of [...catalog.standard, ...settings.risk]) {
+    for (const v of caseVariants(n)) if (!map.has(v)) map.set(v, n);
+  }
+  for (const n of settings.custom) if (!map.has(n)) map.set(n, n);
+  return map;
+}
 
 let catalogPromise = null;
 function loadCatalog() {

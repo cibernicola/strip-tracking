@@ -107,8 +107,8 @@ $('#customForm').addEventListener('submit', async (e) => {
   const cur = await getSettings();
   if (!name) return;
   if (!validParamName(name)) return setMsg('Nombre no válido: sin espacios ni caracteres como = & # ? % +', true);
-  if (catalog.standard.includes(name)) return setMsg(`«${name}» ya está en la lista estándar.`, true);
-  if (catalog.risk.some((r) => r.name === name)) return setMsg(`«${name}» está en el grupo de riesgo: actívalo ahí.`, true);
+  if (catalog.standard.some((n) => caseVariants(n).has(name))) return setMsg(`«${name}» ya está cubierto por la lista estándar (también en mayúsculas).`, true);
+  if (catalog.risk.some((r) => caseVariants(r.name).has(name))) return setMsg(`«${name}» está en el grupo de riesgo: actívalo ahí.`, true);
   if (cur.custom.includes(name)) return setMsg(`«${name}» ya está añadido.`, true);
   if (cur.custom.length >= MAX_CUSTOM) return setMsg(`Máximo ${MAX_CUSTOM} parámetros propios.`, true);
   await saveSettings({ custom: [...cur.custom, name] });
