@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Strip Tracking",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Elimina parámetros de tracking (utm_*, fbclid, gclid...) de las URLs antes de navegar. Local, sin red, con estadísticas.",
-  "minimum_chrome_version": "110",
+  "minimum_chrome_version": "111",
   "permissions": [
     "declarativeNetRequest",
     "storage",
     "webNavigation",
-    "alarms"
+    "alarms",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -2,3 +2,5 @@ node_modules/
 _metadata/
 *.zip
 .claude/
+# Lista personal de cookies a mantener (no publicar)
+local-defaults.json

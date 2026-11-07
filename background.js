@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('shared.js'); // ajustes, catálogo de parámetros y utilidades comunes
+importScripts('shared.js', 'cookies.js'); // ajustes y utilidades comunes; borrado de cookies
 
 /*
  * Strip Tracking — service worker.
@@ -31,7 +31,20 @@ function enqueue(label, fn) {
 
 /* ---------- reglas ---------- */
 
+// Si falla la actualización de reglas (p. ej. una regla inválida) la extensión dejaría de limpiar sin avisar:
+// se recuerda el fallo para mostrarlo en la insignia («ERR») hasta el siguiente intento correcto.
+let rulesError = false;
 async function applyRules() {
+  try {
+    await applyRulesUnsafe();
+    rulesError = false;
+  } catch (e) {
+    rulesError = true;
+    throw e;
+  }
+}
+
+async function applyRulesUnsafe() {
   const [settings, catalog] = await Promise.all([getSettings(), loadCatalog()]);
   const dnr = chrome.declarativeNetRequest;
   const types = ['main_frame', 'sub_frame'];
@@ -155,6 +168,11 @@ async function updateBadge() {
     await chrome.action.setBadgeText({ text: 'OFF' });
     return;
   }
+  if (rulesError) {
+    await chrome.action.setBadgeBackgroundColor({ color: '#c4262e' });
+    await chrome.action.setBadgeText({ text: 'ERR' });
+    return;
+  }
   const n = stats?.byDay?.[dayKey()]?.urls || 0;
   await chrome.action.setBadgeBackgroundColor({ color: '#2e7d32' });
   await chrome.action.setBadgeText({ text: n ? (n > 999 ? '999+' : String(n)) : '' });
@@ -172,6 +190,11 @@ function scheduleMidnight() {
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   try {
     if (!details.url || !details.url.includes('?')) return;
+    // Solo el documento principal y nunca incógnito: los marcos incrustados (anuncios) inflarían los contadores
+    // y la navegación privada no debe dejar rastro en el almacenamiento. Si no se puede saber, no se registra.
+    if (details.frameId !== 0) return;
+    const tab = await chrome.tabs.get(details.tabId).catch(() => null);
+    if (!tab || tab.incognito) return;
     const [catalog, settings] = await Promise.all([loadCatalog(), getSettings()]);
     if (!settings.enabled) return;
     const { allow } = settings;

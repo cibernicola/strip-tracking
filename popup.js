@@ -1,6 +1,7 @@
 'use strict';
 
 const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
 const nf = new Intl.NumberFormat('es-ES');
 const nf1 = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 });
 const fmt = (n) => nf.format(n || 0);
@@ -9,6 +10,10 @@ const shortDay = (k) => `${k.slice(8, 10)}/${k.slice(5, 7)}`; // YYYY-MM-DD → 
 const EMPTY = () => ({ since: null, urls: 0, params: 0, byParam: {}, byDomain: {}, byDay: {}, recent: [] });
 
 let siteHost = null; // host de la pestaña activa (null si no es http/https)
+let catalog = null; // params.json: { standard, risk }
+let lastStats = EMPTY();
+let cookieStats = null;
+let rank = 'params';
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -17,9 +22,61 @@ function el(tag, cls, text) {
   return e;
 }
 
-/* ---------- ajustes ---------- */
+function chip(text, onRemove, removeLabel, mono) {
+  const c = el('span', 'chip' + (mono ? ' mono' : ''));
+  const t = el('span', 't', text);
+  t.title = text;
+  const x = el('button', 'x', '✕');
+  x.type = 'button';
+  x.setAttribute('aria-label', removeLabel);
+  x.addEventListener('click', onRemove);
+  c.append(t, x);
+  return c;
+}
 
-let catalog = null; // params.json: { standard, risk }
+function fillChips(container, items, build, emptyText) {
+  container.replaceChildren();
+  if (!items.length) container.append(el('p', 'empty', emptyText));
+  for (const it of items) container.append(build(it));
+}
+
+function setMsg(sel, text, bad) {
+  const m = $(sel);
+  m.textContent = text || '';
+  m.classList.toggle('bad', !!bad);
+}
+
+/* ---------- pestañas ---------- */
+
+const TABS = ['overview', 'params', 'cookies', 'data'];
+
+function selectTab(name, focus) {
+  if (!TABS.includes(name)) name = 'overview';
+  for (const b of $$('.tab')) {
+    const on = b.dataset.tab === name;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+    if (on && focus) b.focus();
+  }
+  for (const p of $$('.panel')) p.hidden = p.id !== 'tab-' + name;
+  $('main').scrollTop = 0;
+  try {
+    localStorage.setItem('tab', name);
+  } catch {}
+}
+
+for (const b of $$('.tab')) {
+  b.addEventListener('click', () => selectTab(b.dataset.tab));
+  b.addEventListener('keydown', (e) => {
+    const i = TABS.indexOf(b.dataset.tab);
+    if (e.key === 'ArrowRight') selectTab(TABS[(i + 1) % TABS.length], true);
+    else if (e.key === 'ArrowLeft') selectTab(TABS[(i + TABS.length - 1) % TABS.length], true);
+    else return;
+    e.preventDefault();
+  });
+}
+
+/* ---------- ajustes ---------- */
 
 async function saveSettings(patch) {
   const next = { ...(await getSettings()), ...patch };
@@ -39,65 +96,68 @@ async function currentHost() {
 
 function renderSettings(settings) {
   $('#enabled').checked = settings.enabled;
-  $('#enabledLabel').textContent = settings.enabled ? 'Activo' : 'Pausado';
+  $('#status').textContent = settings.enabled ? '● ACTIVO' : '○ PAUSADO';
   document.body.classList.toggle('off', !settings.enabled);
 
-  // Excepción para el sitio actual
+  renderSite(settings);
+
+  // Excepciones de limpieza de URLs
+  $('#allowCount').textContent = settings.allow.length ? String(settings.allow.length) : '';
+  fillChips(
+    $('#allowList'),
+    settings.allow,
+    (d) => chip(d, () => saveSettings({ allow: settings.allow.filter((x) => x !== d) }), `Quitar la excepción de ${d}`),
+    'Ninguno todavía.'
+  );
+
+  // Parámetros propios
+  $('#customCount').textContent = settings.custom.length ? String(settings.custom.length) : '';
+  fillChips(
+    $('#customList'),
+    settings.custom,
+    (p) => chip(p, () => saveSettings({ custom: settings.custom.filter((x) => x !== p) }), `Dejar de eliminar el parámetro ${p}`, true),
+    'Ninguno todavía.'
+  );
+
+  renderRisk(settings);
+  renderCookies(settings);
+}
+
+/* Tarjeta del sitio actual: dos interruptores rápidos */
+function renderSite(settings) {
   const box = $('#siteBox');
   box.hidden = !siteHost;
-  if (siteHost) {
-    const covered = isAllowed(siteHost, settings.allow);
-    const exact = settings.allow.includes(siteHost);
-    $('#siteHost').textContent = siteHost;
-    $('#siteHost').title = siteHost;
-    const btn = $('#siteBtn');
-    btn.disabled = !settings.enabled || (covered && !exact);
-    btn.textContent = exact ? 'Volver a limpiar aquí' : covered ? 'Excluido por un dominio superior' : 'No limpiar en este sitio';
-  }
+  if (!siteHost) return;
+  $('#siteHost').textContent = siteHost;
+  $('#siteHost').title = siteHost;
 
-  // Lista de excepciones
-  const list = $('#allowList');
-  list.replaceChildren();
-  $('#allowBox').hidden = !settings.allow.length;
-  for (const d of settings.allow) {
-    const row = el('div', 'item');
-    const name = el('span', 'h', d);
-    name.title = d;
-    const rm = el('button', 'icon', '✕');
-    rm.type = 'button';
-    rm.setAttribute('aria-label', `Quitar la excepción de ${d}`);
-    rm.addEventListener('click', () => saveSettings({ allow: settings.allow.filter((x) => x !== d) }));
-    row.append(name, rm);
-    list.append(row);
-  }
+  const covered = isAllowed(siteHost, settings.allow);
+  const exact = settings.allow.includes(siteHost);
+  const urlBtn = $('#siteBtn');
+  urlBtn.classList.toggle('on', !covered);
+  urlBtn.disabled = !settings.enabled || (covered && !exact);
+  urlBtn.textContent = covered ? (exact ? 'URLs · sin limpiar' : 'URLs · excluido (padre)') : 'URLs · limpiando';
+  urlBtn.title = exact ? 'Volver a limpiar las URLs de este sitio' : covered ? 'Excluido por un dominio superior' : 'No limpiar las URLs de este sitio';
 
-  renderCustom(settings);
-  renderRisk(settings);
+  const c = settings.cookies;
+  const kcovered = c.keep.some((k) => related(k, siteHost));
+  const kexact = c.keep.includes(siteHost);
+  const ckBtn = $('#ckSiteBtn');
+  ckBtn.classList.toggle('on', kcovered);
+  ckBtn.disabled = kcovered && !kexact;
+  ckBtn.textContent = kcovered ? 'Cookies · protegidas' : 'Cookies · se borran';
+  ckBtn.title = kexact ? 'Dejar de mantener las cookies de este sitio' : kcovered ? 'Cubierto por otro dominio de la lista blanca' : 'Mantener las cookies de este sitio';
 }
+
+$('#enabled').addEventListener('change', (e) => saveSettings({ enabled: e.target.checked }));
+
+$('#siteBtn').addEventListener('click', async () => {
+  if (!siteHost) return;
+  const { allow } = await getSettings();
+  await saveSettings({ allow: allow.includes(siteHost) ? allow.filter((d) => d !== siteHost) : [...allow, siteHost] });
+});
 
 /* ---------- parámetros propios ---------- */
-
-function renderCustom(settings) {
-  const list = $('#customList');
-  list.replaceChildren();
-  for (const p of settings.custom) {
-    const row = el('div', 'item');
-    const name = el('span', 'h mono', p);
-    name.title = p;
-    const rm = el('button', 'icon', '✕');
-    rm.type = 'button';
-    rm.setAttribute('aria-label', `Dejar de eliminar el parámetro ${p}`);
-    rm.addEventListener('click', () => saveSettings({ custom: settings.custom.filter((x) => x !== p) }));
-    row.append(name, rm);
-    list.append(row);
-  }
-}
-
-function setMsg(text, bad) {
-  const m = $('#customMsg');
-  m.textContent = text || '';
-  m.classList.toggle('bad', !!bad);
-}
 
 $('#customForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -106,14 +166,14 @@ $('#customForm').addEventListener('submit', async (e) => {
   const name = input.value.trim().replace(/^[?&]+/, '').split('=')[0];
   const cur = await getSettings();
   if (!name) return;
-  if (!validParamName(name)) return setMsg('Nombre no válido: sin espacios ni caracteres como = & # ? % +', true);
-  if (catalog.standard.some((n) => caseVariants(n).has(name))) return setMsg(`«${name}» ya está cubierto por la lista estándar (también en mayúsculas).`, true);
-  if (catalog.risk.some((r) => caseVariants(r.name).has(name))) return setMsg(`«${name}» está en el grupo de riesgo: actívalo ahí.`, true);
-  if (cur.custom.includes(name)) return setMsg(`«${name}» ya está añadido.`, true);
-  if (cur.custom.length >= MAX_CUSTOM) return setMsg(`Máximo ${MAX_CUSTOM} parámetros propios.`, true);
+  if (!validParamName(name)) return setMsg('#customMsg', 'Nombre no válido: sin espacios ni caracteres como = & # ? % +', true);
+  if (catalog.standard.some((n) => caseVariants(n).has(name))) return setMsg('#customMsg', `«${name}» ya está cubierto por la lista estándar (también en mayúsculas).`, true);
+  if (catalog.risk.some((r) => caseVariants(r.name).has(name))) return setMsg('#customMsg', `«${name}» está en el grupo de riesgo: actívalo ahí.`, true);
+  if (cur.custom.includes(name)) return setMsg('#customMsg', `«${name}» ya está añadido.`, true);
+  if (cur.custom.length >= MAX_CUSTOM) return setMsg('#customMsg', `Máximo ${MAX_CUSTOM} parámetros propios.`, true);
   await saveSettings({ custom: [...cur.custom, name] });
   input.value = '';
-  setMsg(`«${name}» añadido.`);
+  setMsg('#customMsg', `«${name}» añadido.`);
 });
 
 /* ---------- grupo de riesgo ---------- */
@@ -121,33 +181,156 @@ $('#customForm').addEventListener('submit', async (e) => {
 let riskBuilt = false;
 function renderRisk(settings) {
   const on = new Set(settings.risk);
-  $('#riskCount').textContent = `(${on.size} de ${catalog.risk.length} activados)`;
+  $('#riskCount').textContent = `${on.size}/${catalog.risk.length}`;
   const list = $('#riskList');
   if (!riskBuilt) {
-    // Se construye una sola vez; luego solo se sincronizan las casillas (no se pierde el foco).
+    // Se construye una sola vez; luego solo se sincronizan los interruptores (no se pierde el foco).
     riskBuilt = true;
     for (const r of catalog.risk) {
-      const label = el('label', 'risk');
+      const row = el('label', 'riskrow');
+      const sw = el('span', 'switch');
       const cb = el('input');
       cb.type = 'checkbox';
+      cb.setAttribute('role', 'switch');
       cb.dataset.name = r.name;
       cb.addEventListener('change', async () => {
         const cur = new Set((await getSettings()).risk);
         cb.checked ? cur.add(r.name) : cur.delete(r.name);
         await saveSettings({ risk: [...cur] });
       });
+      sw.append(cb, el('span', 'track'));
       const text = el('span');
-      text.append(el('b', 'mono', r.name), el('small', null, r.reason));
-      label.append(cb, text);
-      list.append(label);
+      text.append(el('b', null, r.name), el('small', null, r.reason));
+      row.append(sw, text);
+      list.append(row);
     }
   }
   for (const cb of list.querySelectorAll('input')) cb.checked = on.has(cb.dataset.name);
 }
 
+/* ---------- cookies ---------- */
+
+// Cualquier cambio de la lista la marca como editada por el usuario (deja de aplicarse la de por defecto).
+const saveKeep = (keep) => saveCookies({ keep, keepEdited: true });
+
+async function saveCookies(patch) {
+  const cur = await getSettings();
+  await saveSettings({ cookies: { ...cur.cookies, ...patch } });
+}
+
+function renderCookies(settings) {
+  const c = settings.cookies;
+  $('#ckClose').checked = c.onClose;
+  $('#ckStartup').checked = c.onStartup;
+  const seg = $('#ckDelaySeg');
+  seg.classList.toggle('off', !c.onClose);
+  for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(Number(b.dataset.min) === c.delayMin));
+
+  const modes = [c.onClose && 'al cerrar sitios', c.onStartup && 'al iniciar'].filter(Boolean);
+  $('#cookieState').textContent = modes.length ? modes.join(' + ') : 'desactivado';
+  const tab = $('#t-cookies');
+  if (modes.length) tab.dataset.on = '';
+  else delete tab.dataset.on;
+
+  $('#ckPaused').hidden = settings.enabled;
+  $('#ckKeepCount').textContent = String(c.keep.length);
+  fillChips(
+    $('#ckKeepList'),
+    c.keep,
+    (d) => chip(d, () => saveKeep(c.keep.filter((x) => x !== d)), `Dejar de mantener las cookies de ${d}`),
+    'La lista está vacía: se borrarían las cookies de todos los sitios.'
+  );
+  $('#ckReset').hidden = !c.keepEdited;
+
+  const total = cookieStats?.total || 0;
+  const today = cookieStats?.byDay?.[dayKey()] || 0;
+  $('#ckTotal').textContent = fmt(total);
+  $('#ckToday').textContent = total ? `${fmt(today)} hoy` : 'aún ninguna';
+}
+
+// Vista previa de lo que se borraría ahora mismo (el service worker cuenta sin borrar). null si falla.
+async function cookiePreview() {
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'cookies-preview' });
+    return r && !r.error ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+// Activar un modo de borrado automático es destructivo: se explica y se muestra la exposición actual antes de aceptar.
+async function toggleCookieMode(key, input) {
+  if (!input.checked) return saveCookies({ [key]: false });
+  const prev = await cookiePreview();
+  const what =
+    key === 'onClose'
+      ? 'Cuando dejes de usar un sitio se borrarán sus cookies, pasado el tiempo de espera.'
+      : 'Al iniciar el navegador se borrarán las cookies de todo lo que no esté en la lista blanca.';
+  const exposure = prev
+    ? `
+
+Ahora mismo hay ${fmt(prev.count)} cookies de ${fmt(prev.sites)} dominios fuera de la lista blanca y sin pestaña abierta.`
+    : '';
+  if (!confirm(`${what}${exposure}
+
+Se cerrará la sesión en esos sitios y no se puede deshacer. ¿Activar?`)) {
+    input.checked = false;
+    return;
+  }
+  await saveCookies({ [key]: true });
+}
+
+$('#ckClose').addEventListener('change', (e) => toggleCookieMode('onClose', e.target));
+$('#ckStartup').addEventListener('change', (e) => toggleCookieMode('onStartup', e.target));
+for (const b of $$('#ckDelaySeg button')) b.addEventListener('click', () => saveCookies({ delayMin: Number(b.dataset.min) }));
+
+$('#ckSiteBtn').addEventListener('click', async () => {
+  if (!siteHost) return;
+  const { keep } = (await getSettings()).cookies;
+  await saveKeep(keep.includes(siteHost) ? keep.filter((d) => d !== siteHost) : [...keep, siteHost]);
+});
+
+$('#ckForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = $('#ckInput');
+  if (!input.value.trim()) return;
+  const host = parseHostInput(input.value);
+  if (!host) return setMsg('#ckMsg', 'Dominio no válido. Ejemplo: github.com', true);
+  const { keep } = (await getSettings()).cookies;
+  if (keep.includes(host)) return setMsg('#ckMsg', `«${host}» ya está en la lista.`, true);
+  if (keep.length >= MAX_KEEP) return setMsg('#ckMsg', `Máximo ${MAX_KEEP} dominios.`, true);
+  await saveKeep([...keep, host]);
+  input.value = '';
+  setMsg('#ckMsg', `«${host}» añadido: se mantienen sus cookies y las de sus subdominios.`);
+});
+
+$('#ckReset').addEventListener('click', () => {
+  if (confirm('¿Restaurar la lista blanca por defecto? Se perderán tus cambios en la lista.')) {
+    saveCookies({ keep: [...catalog.defaultKeep], keepEdited: false });
+  }
+});
+
+$('#ckNow').addEventListener('click', async () => {
+  const btn = $('#ckNow');
+  btn.disabled = true;
+  try {
+    const prev = await cookiePreview();
+    if (!prev) return setMsg('#ckNowMsg', 'No se pudo calcular qué se borraría.', true);
+    if (!prev.count) return setMsg('#ckNowMsg', 'No hay nada que borrar.');
+    if (!confirm(`Se borrarán ${fmt(prev.count)} cookies de ${fmt(prev.sites)} dominios que no están en la lista blanca ni tienen una pestaña abierta. Se cerrará la sesión en ellos y no se puede deshacer. ¿Continuar?`)) return;
+    const res = await chrome.runtime.sendMessage({ type: 'cookies-sweep-now' });
+    if (res?.error) throw new Error(res.error);
+    setMsg('#ckNowMsg', `Borradas ahora: ${fmt(res?.count)}.`);
+  } catch (e) {
+    setMsg('#ckNowMsg', `No se pudo completar el borrado${e?.message ? ': ' + e.message : '.'}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 /* ---------- estadísticas ---------- */
 
-function topList(container, entries, valueOf, labelOf) {
+function rankList(container, entries, valueOf, labelOf) {
   container.replaceChildren();
   if (!entries.length) {
     container.append(el('p', 'empty', 'Sin datos todavía.'));
@@ -167,10 +350,27 @@ function topList(container, entries, valueOf, labelOf) {
   }
 }
 
+function renderRank() {
+  const s = lastStats;
+  for (const b of $$('[data-rank]')) b.setAttribute('aria-pressed', String(b.dataset.rank === rank));
+  if (rank === 'params') {
+    rankList($('#rankList'), Object.entries(s.byParam).sort((a, b) => b[1] - a[1]).slice(0, 8), (e) => e[1], (e) => e[0]);
+  } else {
+    rankList($('#rankList'), Object.entries(s.byDomain).sort((a, b) => b[1].urls - a[1].urls).slice(0, 8), (e) => e[1].urls, (e) => e[0]);
+  }
+}
+
+for (const b of $$('[data-rank]')) {
+  b.addEventListener('click', () => {
+    rank = b.dataset.rank;
+    renderRank();
+  });
+}
+
 function renderStats(stats) {
   const s = { ...EMPTY(), ...(stats || {}) };
+  lastStats = s;
 
-  // Tarjetas
   const today = s.byDay[dayKey(new Date())] || { urls: 0, params: 0 };
   const days = [];
   let week = 0;
@@ -184,21 +384,21 @@ function renderStats(stats) {
   }
   const avg = s.urls ? nf1.format(s.params / s.urls) : '0';
   const cards = [
-    [fmt(today.urls), 'URLs hoy'],
-    [fmt(week), 'URLs 7 días'],
-    [fmt(s.urls), 'URLs totales'],
-    [fmt(s.params), 'Parámetros eliminados'],
-    [avg, 'Parámetros por URL'],
-    [fmt(Object.keys(s.byDomain).length), 'Dominios distintos'],
+    [fmt(today.urls), 'URLs hoy', 'hero'],
+    [fmt(week), 'URLs · 7 días', ''],
+    [fmt(s.urls), 'URLs totales', ''],
+    [fmt(s.params), 'Parámetros quitados', 'mini'],
+    [avg, 'Parámetros por URL', 'mini'],
+    [fmt(Object.keys(s.byDomain).length), 'Dominios distintos', 'mini'],
   ];
   const cardsEl = $('#cards');
   cardsEl.replaceChildren();
-  for (const [v, l] of cards) {
-    const c = el('div', 'card');
+  for (const [v, l, cls] of cards) {
+    const c = el('div', 'kpi' + (cls ? ' ' + cls : ''));
     c.append(el('b', null, v), el('span', null, l));
     cardsEl.append(c);
   }
-  $('#since').textContent = s.since ? 'desde ' + new Date(s.since).toLocaleDateString('es-ES') : '';
+  $('#since').textContent = s.since ? '· desde ' + new Date(s.since).toLocaleDateString('es-ES') : '';
 
   // Gráfico de 14 días
   const chart = $('#chart');
@@ -216,19 +416,7 @@ function renderStats(stats) {
   }
   $('#axisStart').textContent = shortDay(days[0][0]);
 
-  // Rankings
-  topList(
-    $('#topParams'),
-    Object.entries(s.byParam).sort((a, b) => b[1] - a[1]).slice(0, 10),
-    (e) => e[1],
-    (e) => e[0]
-  );
-  topList(
-    $('#topDomains'),
-    Object.entries(s.byDomain).sort((a, b) => b[1].urls - a[1].urls).slice(0, 10),
-    (e) => e[1].urls,
-    (e) => e[0]
-  );
+  renderRank();
 
   // Reciente
   const recent = $('#recent');
@@ -246,14 +434,31 @@ function renderStats(stats) {
   }
 }
 
-async function load() {
-  const { stats } = await chrome.storage.local.get('stats');
-  renderStats(stats);
-  catalog = await loadCatalog();
-  renderSettings(await getSettings());
+/* ---------- carga ---------- */
+
+function showError(e) {
+  console.error('strip-tracking popup:', e);
+  const box = $('#loadErr');
+  box.textContent = `Error al mostrar el popup: ${e?.message || e}`;
+  box.hidden = false;
 }
 
-/* ---------- exportación ---------- */
+async function load() {
+  try {
+    const { stats, cookieStats: ck } = await chrome.storage.local.get(['stats', 'cookieStats']);
+    cookieStats = ck || null;
+    renderStats(stats);
+    catalog = await loadCatalog();
+    renderSettings(await getSettings());
+    $('#loadErr').hidden = true;
+  } catch (e) {
+    showError(e);
+  }
+}
+
+$('#ver').textContent = `Strip Tracking v${chrome.runtime.getManifest().version}`;
+
+/* ---------- exportación y reinicio ---------- */
 
 function download(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -281,34 +486,24 @@ $('#exportCsv').addEventListener('click', async () => {
   for (const [k, v] of Object.entries(s.byDomain)) rows.push(['dominio', k, v.urls, v.params]);
   for (const [k, v] of Object.entries(s.byParam)) rows.push(['parametro', k, '', v]);
   // BOM + «;» para que Excel (configuración regional española) lo abra bien.
-  download(
-    'strip-tracking-stats.csv',
-    '﻿' + rows.map((r) => r.map(csvCell).join(';')).join('\r\n'),
-    'text/csv;charset=utf-8'
-  );
-});
-
-/* ---------- acciones ---------- */
-
-$('#enabled').addEventListener('change', (e) => saveSettings({ enabled: e.target.checked }));
-
-$('#siteBtn').addEventListener('click', async () => {
-  if (!siteHost) return;
-  const { allow } = await getSettings();
-  await saveSettings({
-    allow: allow.includes(siteHost) ? allow.filter((d) => d !== siteHost) : [...allow, siteHost],
-  });
+  download('strip-tracking-stats.csv', '﻿' + rows.map((r) => r.map(csvCell).join(';')).join('\r\n'), 'text/csv;charset=utf-8');
 });
 
 $('#reset').addEventListener('click', async () => {
   if (!confirm('¿Borrar todas las estadísticas? Esta acción no se puede deshacer.')) return;
-  await chrome.storage.local.remove('stats');
+  await chrome.storage.local.remove(['stats', 'cookieStats']);
   await load();
 });
 
 chrome.storage.onChanged.addListener((c, area) => {
-  if (area === 'local' && (c.stats || c.settings)) load();
+  if (area === 'local' && (c.stats || c.settings || c.cookieStats)) load();
 });
+
+let startTab = 'overview';
+try {
+  startTab = localStorage.getItem('tab') || startTab;
+} catch {}
+selectTab(startTab);
 
 currentHost().then((h) => {
   siteHost = h;

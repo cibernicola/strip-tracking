@@ -3,7 +3,7 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 const root = path.join(__dirname, '..');
-const files = ['manifest.json', 'background.js', 'shared.js', 'params.json', 'popup.html', 'popup.css', 'popup.js',
+const files = ['manifest.json', 'background.js', 'shared.js', 'cookies.js', 'params.json', 'popup.html', 'popup.css', 'popup.js',
   'icons/icon16.png', 'icons/icon32.png', 'icons/icon48.png', 'icons/icon128.png'];
 const py = `import zipfile,sys
 with zipfile.ZipFile('strip-tracking.zip','w',zipfile.ZIP_DEFLATED) as z:
